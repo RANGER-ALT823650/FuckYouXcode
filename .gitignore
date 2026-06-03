@@ -1,0 +1,42 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcuserdata
+*.xcworkspace/xcuserdata/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Swift Package Manager
+.build/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Large dictionary databases
+Resources/*.db
+Resources/*.db-shm
+Resources/*.db-wal
+Resources/*.sqlite
+Resources/*.sqlite-shm
+Resources/*.sqlite-wal
+
+# MDict dictionary files (binary, large)
+**/*.mdd
+**/*.mdx
+
+# Python
+__pycache__/
+*.pyc
+
+# Temp & runtime data
+tmp/
+var/
+
+# Xcode user-specific
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xcbkptlist
+IDEFindNavigatorScopes.plist

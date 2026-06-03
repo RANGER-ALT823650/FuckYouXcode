@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FuckYouXcode Dictionary</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <p class="eyebrow">FuckYouXcode Dictionary</p>
+        <h1>侧边查词</h1>
+        <p class="subtitle">右键选中英文单词，或直接在这里继续查。</p>
+      </header>
+
+      <div class="controls-row">
+        <label class="dictionary-picker-label" for="dictionary-select">词典</label>
+        <select id="dictionary-select" class="dictionary-select"></select>
+      </div>
+
+      <form id="lookup-form" class="lookup-form">
+        <label class="sr-only" for="lookup-input">Lookup word</label>
+        <input id="lookup-input" name="word" type="text" autocomplete="off" placeholder="Type a word">
+        <button type="submit">查询</button>
+      </form>
+
+      <div id="status-card" class="status-card" aria-live="polite"></div>
+      <section id="html-panel" class="html-panel" hidden>
+        <div class="html-panel-header">
+          <p class="html-panel-label">词条正文</p>
+          <p id="html-panel-caption" class="html-panel-caption"></p>
+        </div>
+        <iframe id="html-frame" class="html-frame" sandbox="allow-scripts allow-same-origin"></iframe>
+      </section>
+      <main id="results" class="results"></main>
+    </div>
+
+    <template id="entry-template">
+      <article class="entry-card">
+        <div class="entry-header">
+          <div>
+            <h2 class="entry-word"></h2>
+            <p class="entry-meta"></p>
+          </div>
+          <div class="entry-badges"></div>
+        </div>
+        <section class="entry-section entry-definition"></section>
+        <section class="entry-section entry-idioms"></section>
+        <section class="entry-section entry-examples"></section>
+        <section class="entry-section entry-origin"></section>
+      </article>
+    </template>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
