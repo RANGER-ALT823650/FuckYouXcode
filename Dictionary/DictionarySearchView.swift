@@ -46,6 +46,13 @@ struct DictionarySearchView: View {
         appState.service(for: appState.selectedDictionaryID)
     }
 
+    private var suggestionService: DictionaryService? {
+        guard appState.option(for: appState.selectedDictionaryID)?.sourceKind == .imported else {
+            return activeService
+        }
+        return appState.service(for: DictionaryOption.defaultID) ?? activeService
+    }
+
     private var previewService: DictionaryService? {
         appState.service(for: DictionaryOption.defaultID) ?? activeService
     }
@@ -165,6 +172,14 @@ struct DictionarySearchView: View {
                                 }
                             }
                         }
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                addToFavorites(word)
+                            } label: {
+                                Label("收藏", systemImage: "star.fill")
+                            }
+                            .tint(.yellow)
+                        }
                     }
                 }
                 .scrollDismissesKeyboard(.immediately)
@@ -230,7 +245,7 @@ struct DictionarySearchView: View {
             return
         }
 
-        guard let service = activeService else {
+        guard let service = suggestionService else {
             suggestions = []
             wordPreviews = [:]
             errorMessage = "当前词典未就绪"
@@ -314,6 +329,25 @@ struct DictionarySearchView: View {
 
         if trimmedQuery.isEmpty {
             loadWordPreviews(for: updatedHistory)
+        }
+    }
+
+    private func addToFavorites(_ rawWord: String) {
+        let word = rawWord.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !word.isEmpty else { return }
+
+        Task {
+            do {
+                _ = try await UserDataService.shared.addFavorite(word: word)
+                await MainActor.run {
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    Haptics.error()
+                }
+            }
         }
     }
 

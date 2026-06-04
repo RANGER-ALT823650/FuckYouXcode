@@ -71,6 +71,21 @@ actor UserDataService {
         return isFavorite
     }
 
+    func addFavorite(word: String) async throws -> Bool {
+        let didInsert = try await db.dbQueue.write { db in
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO favorites(word) VALUES(?)",
+                arguments: [word]
+            )
+            return db.changesCount > 0
+        }
+
+        if didInsert {
+            await notifyLocalMutation()
+        }
+        return didInsert
+    }
+
     func removeFavorite(word: String) async {
         do {
             try await db.dbQueue.write { db in
