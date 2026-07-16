@@ -202,6 +202,18 @@ struct SearchWordsFromVideosView: View {
                 .navigationDestination(for: String.self) { word in
                     DictionaryEntryView(service: dictionaryService, word: word)
                 }
+                .toolbar {
+                    if #available(iOS 26.0, *) {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            userSettingsToolbarButton
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            userSettingsToolbarButton
+                        }
+                    }
+                }
         }
         .sheet(item: $dictionarySheetTerm) { lookup in
             OfficialDictionaryEntryView(term: lookup.term)
@@ -227,19 +239,42 @@ struct SearchWordsFromVideosView: View {
 
     private var mainContent: some View {
         ZStack(alignment: .topTrailing) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    topHeaderSection
-                    pickerAndActionsSection
-                    modePickerSection
-                    selectedPhotosSection
-                    filterControlsSection
-                    wordsSection
-                    ocrRawTextSection
-                }
-            }
+            adjustedSearchScrollView
             previewOverlay
         }
+    }
+
+    @ViewBuilder
+    private var adjustedSearchScrollView: some View {
+        if #available(iOS 26.0, *) {
+            searchScrollView
+                .scrollEdgeEffectHidden(for: .top)
+        } else {
+            searchScrollView
+        }
+    }
+
+    private var searchScrollView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                topHeaderSection
+                pickerAndActionsSection
+                modePickerSection
+                selectedPhotosSection
+                filterControlsSection
+                wordsSection
+                ocrRawTextSection
+            }
+        }
+        // Keep the original content position while the native toolbar occupies the top bar.
+        .contentMargins(.top, -nativeToolbarHeight, for: .scrollContent)
+    }
+
+    private var nativeToolbarHeight: CGFloat {
+        if #available(iOS 26.0, *) {
+            return 64
+        }
+        return 44
     }
 
     private var topHeaderSection: some View {
@@ -250,22 +285,20 @@ struct SearchWordsFromVideosView: View {
                 .padding(.leading)
                 .padding(.top)
             Spacer()
-            Button {
-                showUserSettingsSheet = true
-            } label: {
-                UserAvatarCircleView(image: profileStore.avatarImage, size: 40)
-                    .overlay {
-                        Circle()
-                            .strokeBorder(.primary.opacity(0.16), lineWidth: 1)
-                    }
-                    .frame(width: 40, height: 40)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("用户设置")
-            .padding(.top, 8)
-            .padding(.trailing, 16)
         }
+    }
+
+    private var userSettingsToolbarButton: some View {
+        Button {
+            showUserSettingsSheet = true
+        } label: {
+            UserAvatarCircleView(image: profileStore.avatarImage, size: 32)
+                .overlay {
+                    Circle()
+                        .strokeBorder(.primary.opacity(0.16), lineWidth: 1)
+                }
+        }
+        .accessibilityLabel("用户设置")
     }
 
     private var pickerAndActionsSection: some View {

@@ -36,6 +36,64 @@ struct UserAvatarCircleView: View {
     }
 }
 
+private enum SevenDayBuildCountdown {
+    private struct BuildIdentity {
+        let signature: String
+        let date: Date
+    }
+
+    private static let buildSignatureKey = "settingsCountdown.buildSignature"
+    private static let deadlineKey = "settingsCountdown.deadline"
+    private static let duration: TimeInterval = 7 * 24 * 60 * 60
+
+    static func deadline(
+        bundle: Bundle = .main,
+        defaults: UserDefaults = .standard,
+        now: Date = .now
+    ) -> Date {
+        let buildIdentity = buildIdentity(for: bundle, fallbackDate: now)
+        let storedSignature = defaults.string(forKey: buildSignatureKey)
+        let storedDeadline = defaults.object(forKey: deadlineKey) as? Date
+
+        guard storedSignature == buildIdentity.signature, let storedDeadline else {
+            let newDeadline = buildIdentity.date.addingTimeInterval(duration)
+            defaults.set(buildIdentity.signature, forKey: buildSignatureKey)
+            defaults.set(newDeadline, forKey: deadlineKey)
+            return newDeadline
+        }
+
+        return storedDeadline
+    }
+
+    static func text(until deadline: Date, now: Date) -> String {
+        let totalSeconds = max(0, Int(deadline.timeIntervalSince(now)))
+        guard totalSeconds > 0 else { return "已结束" }
+
+        let days = totalSeconds / 86_400
+        let hours = totalSeconds % 86_400 / 3_600
+        let minutes = totalSeconds % 3_600 / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%d天 %02d:%02d:%02d", days, hours, minutes, seconds)
+    }
+
+    private static func buildIdentity(for bundle: Bundle, fallbackDate: Date) -> BuildIdentity {
+        let bundleAttributes = try? FileManager.default.attributesOfItem(atPath: bundle.bundleURL.path)
+        let executableAttributes = bundle.executableURL.flatMap {
+            try? FileManager.default.attributesOfItem(atPath: $0.path)
+        }
+        let bundleModificationDate = bundleAttributes?[.modificationDate] as? Date
+        let executableModificationDate = executableAttributes?[.modificationDate] as? Date
+        let executableSize = (executableAttributes?[.size] as? NSNumber)?.uint64Value ?? 0
+        let buildDate = [bundleModificationDate, executableModificationDate]
+            .compactMap { $0 }
+            .max() ?? fallbackDate
+
+        // The installed bundle path changes when Xcode deploys a new build to a device.
+        let signature = "\(bundle.bundleURL.path)-\(bundleModificationDate?.timeIntervalSince1970 ?? 0)-\(executableModificationDate?.timeIntervalSince1970 ?? 0)-\(executableSize)"
+        return BuildIdentity(signature: signature, date: buildDate)
+    }
+}
+
 @MainActor
 struct UserSettingsSheetView: View {
     private struct AvatarCropSession: Identifiable {
@@ -58,6 +116,7 @@ struct UserSettingsSheetView: View {
     @State private var nicknameDraft: String = ""
     @AppStorage(AppAppearanceController.darkModeStorageKey) private var isDarkModeEnabled = false
     @FocusState private var isNicknameFieldFocused: Bool
+    private let countdownDeadline = SevenDayBuildCountdown.deadline()
     private let policyAndTermsURLString = "https://ranger-alt823650.github.io/privacy-policy-terms/"
     private let policyAndTermsFallbackURL = URL(string: "https://example.com")!
     private let xiaohongshuURLString = "https://www.xiaohongshu.com/user/profile/6788e058000000000803f0b9"
@@ -69,6 +128,19 @@ struct UserSettingsSheetView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        HStack {
+                            Label("七天倒计时", systemImage: "timer")
+                            Spacer()
+                            Text(SevenDayBuildCountdown.text(until: countdownDeadline, now: context.date))
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+
                 Section {
                     Button {
                         requestPhotoLibraryAccessAndPresentAvatarPicker()
@@ -314,6 +386,19 @@ private struct ArchivedWordGroupsView: View {
                     } label: {
                         ArchivedWordGroupRow(group: group)
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button {
+                            restoreArchivedGroup(group)
+                        } label: {
+                            Label("移出归档", systemImage: "tray.and.arrow.up")
+                        }
+                        .tint(.green)
+                    }
+                    .contextMenu {
+                        Button("移出归档", systemImage: "tray.and.arrow.up") {
+                            restoreArchivedGroup(group)
+                        }
+                    }
                 }
                 .refreshable {
                     await reloadArchivedGroups(showBlockingLoader: false)
@@ -367,6 +452,14 @@ private struct ArchivedWordGroupsView: View {
         }
 
         archivedGroups = await UserDataService.shared.fetchArchivedWordGroups()
+    }
+
+    private func restoreArchivedGroup(_ group: UserDataService.WordGroupSummary) {
+        Task {
+            let didRestore = await UserDataService.shared.restoreWordGroupFromArchive(groupID: group.id)
+            guard didRestore else { return }
+            await reloadArchivedGroups(showBlockingLoader: false)
+        }
     }
 }
 

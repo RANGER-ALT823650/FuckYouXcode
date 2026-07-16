@@ -791,6 +791,68 @@ actor UserDataService {
         return DeletedWordGroupAssets(groupID: groupID, imageFileNames: imageFileNames)
     }
 
+    private static func deleteFavoritesForWordsInGroups(
+        db: Database,
+        groupIDs: [Int64]
+    ) throws {
+        let uniqueGroupIDs = Array(Set(groupIDs)).sorted()
+        guard !uniqueGroupIDs.isEmpty else { return }
+
+        let placeholders = Array(repeating: "?", count: uniqueGroupIDs.count).joined(separator: ",")
+        try db.execute(
+            sql: """
+            DELETE FROM favorites
+            WHERE word IN (
+                SELECT word
+                FROM word_group_words
+                WHERE group_id IN (\(placeholders))
+            )
+            """,
+            arguments: StatementArguments(uniqueGroupIDs)
+        )
+    }
+
+    private static func restoreFavoritesForWordsInGroups(
+        db: Database,
+        groupIDs: [Int64]
+    ) throws {
+        let uniqueGroupIDs = Array(Set(groupIDs)).sorted()
+        guard !uniqueGroupIDs.isEmpty else { return }
+
+        let placeholders = Array(repeating: "?", count: uniqueGroupIDs.count).joined(separator: ",")
+        try db.execute(
+            sql: """
+            INSERT OR IGNORE INTO favorites(word)
+            SELECT DISTINCT word
+            FROM word_group_words
+            WHERE group_id IN (\(placeholders))
+            """,
+            arguments: StatementArguments(uniqueGroupIDs)
+        )
+    }
+
+    private static func realGroupIDsForArchiveMutation(
+        db: Database,
+        groupID: Int64,
+        kind: WordGroupKind
+    ) throws -> [Int64] {
+        switch kind {
+        case .group:
+            return [groupID]
+        case .parent:
+            return try Int64.fetchAll(
+                db,
+                sql: """
+                SELECT id
+                FROM word_groups
+                WHERE parent_group_id = ?
+                  AND kind = 'group'
+                """,
+                arguments: [groupID]
+            )
+        }
+    }
+
     private func removeDeletedWordGroupAssets(_ deletedGroups: [DeletedWordGroupAssets]) {
         for deletedGroup in deletedGroups {
             for fileName in deletedGroup.imageFileNames {
@@ -894,6 +956,16 @@ actor UserDataService {
     func archiveWordGroup(groupID: Int64) async -> Bool {
         do {
             let didArchive = try await db.dbQueue.write { db in
+                guard let kind = try Self.wordGroupKind(db: db, groupID: groupID) else {
+                    return false
+                }
+
+                let groupIDsForFavoriteRemoval = try Self.realGroupIDsForArchiveMutation(
+                    db: db,
+                    groupID: groupID,
+                    kind: kind
+                )
+
                 try db.execute(
                     sql: """
                     UPDATE word_groups
@@ -903,7 +975,13 @@ actor UserDataService {
                     """,
                     arguments: [groupID]
                 )
-                return db.changesCount > 0
+                guard db.changesCount > 0 else { return false }
+
+                try Self.deleteFavoritesForWordsInGroups(
+                    db: db,
+                    groupIDs: groupIDsForFavoriteRemoval
+                )
+                return true
             }
             if didArchive {
                 await notifyLocalMutation()
@@ -911,6 +989,46 @@ actor UserDataService {
             return didArchive
         } catch {
             print("archiveWordGroup error:", error)
+            return false
+        }
+    }
+
+    func restoreWordGroupFromArchive(groupID: Int64) async -> Bool {
+        do {
+            let didRestore = try await db.dbQueue.write { db in
+                guard let kind = try Self.wordGroupKind(db: db, groupID: groupID) else {
+                    return false
+                }
+
+                let groupIDsForFavoriteRestore = try Self.realGroupIDsForArchiveMutation(
+                    db: db,
+                    groupID: groupID,
+                    kind: kind
+                )
+
+                try db.execute(
+                    sql: """
+                    UPDATE word_groups
+                    SET archived_at = NULL
+                    WHERE id = ?
+                      AND archived_at IS NOT NULL
+                    """,
+                    arguments: [groupID]
+                )
+                guard db.changesCount > 0 else { return false }
+
+                try Self.restoreFavoritesForWordsInGroups(
+                    db: db,
+                    groupIDs: groupIDsForFavoriteRestore
+                )
+                return true
+            }
+            if didRestore {
+                await notifyLocalMutation()
+            }
+            return didRestore
+        } catch {
+            print("restoreWordGroupFromArchive error:", error)
             return false
         }
     }

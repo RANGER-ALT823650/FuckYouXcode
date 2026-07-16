@@ -112,8 +112,82 @@ struct WordGroupHierarchyTests {
     }
 
     @Test
+    func archivingGroupRemovesFavoritesButPreservesHighlightsAndAnnotations() async throws {
+        let (service, queue) = try makeUserDataService()
+
+        let groupID = try #require(
+            await service.createWordGroup(baseName: "Archive Me", words: ["alpha", "beta"])
+        )
+
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO favorites(word) VALUES ('alpha'), ('beta'), ('keep')")
+            try db.execute(
+                sql: """
+                INSERT INTO highlights(entry_id, word, dictionary_id, field, start, length, color, note)
+                VALUES (1, 'alpha', 'builtin.default', 'definition', 0, 5, 'yellow', 'marked')
+                """
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO annotations(word, dictionary_id, entry_id, field, start, length, content)
+                VALUES ('alpha', 'builtin.default', 1, 'definition', 0, 5, 'note')
+                """
+            )
+        }
+
+        let didArchive = await service.archiveWordGroup(groupID: groupID)
+        let remainingFavorites = try await queue.read { db in
+            try String.fetchAll(db, sql: "SELECT word FROM favorites ORDER BY word ASC")
+        }
+        let highlightCount = try await queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM highlights WHERE word = 'alpha'") ?? 0
+        }
+        let annotationCount = try await queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM annotations WHERE word = 'alpha'") ?? 0
+        }
+
+        #expect(didArchive)
+        #expect(remainingFavorites == ["keep"])
+        #expect(highlightCount == 1)
+        #expect(annotationCount == 1)
+    }
+
+    @Test
+    func restoringArchivedGroupReturnsItToOriginalPlaceAndRestoresFavorites() async throws {
+        let (service, queue) = try makeUserDataService()
+
+        let groupID = try #require(
+            await service.createWordGroup(baseName: "Restore Me", words: ["alpha", "beta"])
+        )
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO favorites(word) VALUES ('alpha'), ('beta'), ('keep')")
+        }
+
+        let didArchive = await service.archiveWordGroup(groupID: groupID)
+        let favoritesAfterArchive = try await queue.read { db in
+            try String.fetchAll(db, sql: "SELECT word FROM favorites ORDER BY word ASC")
+        }
+
+        let didRestore = await service.restoreWordGroupFromArchive(groupID: groupID)
+        let rootGroups = await service.fetchRootWordGroups()
+        let selectableGroups = await service.fetchSelectableWordGroups()
+        let archivedGroups = await service.fetchArchivedWordGroups()
+        let favoritesAfterRestore = try await queue.read { db in
+            try String.fetchAll(db, sql: "SELECT word FROM favorites ORDER BY word ASC")
+        }
+
+        #expect(didArchive)
+        #expect(favoritesAfterArchive == ["keep"])
+        #expect(didRestore)
+        #expect(rootGroups.contains(where: { $0.id == groupID }))
+        #expect(selectableGroups.contains(where: { $0.id == groupID }))
+        #expect(!archivedGroups.contains(where: { $0.id == groupID }))
+        #expect(favoritesAfterRestore == ["alpha", "beta", "keep"])
+    }
+
+    @Test
     func archivingParentHidesNestedGroupsFromSelectableLists() async throws {
-        let (service, _) = try makeUserDataService()
+        let (service, queue) = try makeUserDataService()
 
         let childGroupID = try #require(
             await service.createWordGroup(baseName: "Child", words: ["alpha"])
@@ -122,6 +196,9 @@ struct WordGroupHierarchyTests {
             await service.createParentWordGroup(baseName: "Folder")
         )
         _ = await service.moveWordGroup(groupID: childGroupID, toParentGroupID: parentGroupID)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO favorites(word) VALUES ('alpha'), ('keep')")
+        }
 
         let didArchive = await service.archiveWordGroup(groupID: parentGroupID)
         let rootGroups = await service.fetchRootWordGroups()
@@ -137,6 +214,9 @@ struct WordGroupHierarchyTests {
             group.id == parentGroupID && group.kind == .parent
         }
         let isChildIndividuallyArchived = archivedGroups.contains { $0.id == childGroupID }
+        let remainingFavorites = try await queue.read { db in
+            try String.fetchAll(db, sql: "SELECT word FROM favorites ORDER BY word ASC")
+        }
 
         #expect(didArchive)
         #expect(!isParentRootVisible)
@@ -144,6 +224,44 @@ struct WordGroupHierarchyTests {
         #expect(isParentArchived)
         #expect(!isChildIndividuallyArchived)
         #expect(archivedParentChildren.map(\.id) == [childGroupID])
+        #expect(remainingFavorites == ["keep"])
+    }
+
+    @Test
+    func restoringArchivedParentReturnsChildrenToSelectableListsAndRestoresFavorites() async throws {
+        let (service, queue) = try makeUserDataService()
+
+        let childGroupID = try #require(
+            await service.createWordGroup(baseName: "Child", words: ["alpha"])
+        )
+        let parentGroupID = try #require(
+            await service.createParentWordGroup(baseName: "Folder")
+        )
+        _ = await service.moveWordGroup(groupID: childGroupID, toParentGroupID: parentGroupID)
+        try await queue.write { db in
+            try db.execute(sql: "INSERT INTO favorites(word) VALUES ('alpha')")
+        }
+
+        let didArchive = await service.archiveWordGroup(groupID: parentGroupID)
+        let favoritesAfterArchive = try await queue.read { db in
+            try String.fetchAll(db, sql: "SELECT word FROM favorites ORDER BY word ASC")
+        }
+
+        let didRestore = await service.restoreWordGroupFromArchive(groupID: parentGroupID)
+        let rootGroups = await service.fetchRootWordGroups()
+        let selectableGroups = await service.fetchSelectableWordGroups()
+        let archivedGroups = await service.fetchArchivedWordGroups()
+        let favoritesAfterRestore = try await queue.read { db in
+            try String.fetchAll(db, sql: "SELECT word FROM favorites ORDER BY word ASC")
+        }
+
+        #expect(didArchive)
+        #expect(favoritesAfterArchive.isEmpty)
+        #expect(didRestore)
+        #expect(rootGroups.contains(where: { $0.id == parentGroupID }))
+        #expect(selectableGroups.contains(where: { $0.id == childGroupID }))
+        #expect(!archivedGroups.contains(where: { $0.id == parentGroupID }))
+        #expect(favoritesAfterRestore == ["alpha"])
     }
 
     @Test
